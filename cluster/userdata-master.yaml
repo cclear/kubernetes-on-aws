@@ -248,7 +248,7 @@ write_files:
     owner: root:root
     content: |
       #!/bin/bash -e
-      for uid in hjacobs mkerk sszuecs rdifazio mlinkhorst mlarsen tsarnowski lmineiro aryszka apfeiffer ytussupbekov; do
+      for uid in mabdelhameed hjacobs mkerk sszuecs rdifazio mlinkhorst mlarsen tsarnowski lmineiro aryszka apfeiffer ytussupbekov; do
           /usr/bin/curl -s https://even.stups.zalan.do/public-keys/$uid/sshkey.pub -o /home/core/.ssh/authorized_keys.d/$uid
       done
       /usr/bin/update-ssh-keys
@@ -1402,6 +1402,248 @@ write_files:
                 requests:
                   cpu: 25m
                   memory: 25Mi
+
+  - path: /srv/kubernetes/manifests/deployments/zmon-agent.yaml
+    content: |
+      apiVersion: extensions/v1beta1
+      kind: Deployment
+      metadata:
+        name: "zmon-agent"
+        namespace: "kube-system"
+      spec:
+        replicas: 1
+        template:
+          metadata:
+            labels:
+              application: "zmon-agent"
+              version: "v0.1"
+            annotations:
+              iam.amazonaws.com/role: {{STACK_NAME}}-{{STACK_VERSION}}-app-secretary
+              scheduler.alpha.kubernetes.io/critical-pod: ''
+              scheduler.alpha.kubernetes.io/tolerations: '[{"key":"CriticalAddonsOnly", "operator":"Exists"}]'
+          spec:
+            containers:
+              - name: zmon-agent
+                image: "registry.opensource.zalan.do/zmon/zmon-agent-core:0.1-a12"
+                env:
+                  - name: ZMON_AGENT_INFRASTRUCTURE_ACCOUNT
+                    value: "aws:{{ACCOUNT_ID}}"
+                  - name: ZMON_AGENT_ACCOUNT_ALIAS
+                    value: "{{ACCOUNT_ALIAS}}"
+                  - name: ZMON_AGENT_REGION
+                    value: "{{REGION}}"
+                  - name: ZMON_AGENT_INTERVAL
+                    value: "60"
+
+                  - name: ZMON_AGENT_ENTITY_SERVICE_URL
+                    value: {{ZMON_URL}}
+
+                  - name: ZMON_AGENT_KUBERNETES_CLUSTER_ID
+                    value: "{{CLUSTER_ID}}"
+                  - name: ZMON_AGENT_KUBERNETES_UPDATE_CERTIFICATES
+                    value: "true"
+
+                  - name: OAUTH2_ACCESS_TOKEN_URL
+                    value: https://token.services.auth.zalando.com/oauth2/access_token?realm=/services
+                  - name: CREDENTIALS_DIR
+                    value: /meta/credentials
+
+                volumeMounts:
+                  - name: credentials
+                    mountPath: /meta/credentials
+                    readOnly: true
+
+              - name: gerry
+                image: registry.opensource.zalan.do/teapot/gerry:v0.0.7
+                args:
+                  - /meta/credentials
+                  - --application-id=secretary
+                  - --mint-bucket=s3://{{MINT_BUCKET}}
+
+                volumeMounts:
+                  - name: credentials
+                    mountPath: /meta/credentials
+                    readOnly: false
+
+            volumes:
+              - name: credentials
+                emptyDir:
+                  medium: Memory
+
+  - path: /srv/kubernetes/manifests/deployments/zmon-worker.yaml
+    content: |
+      apiVersion: extensions/v1beta1
+      kind: Deployment
+      metadata:
+        name: "zmon-worker"
+        namespace: "kube-system"
+      spec:
+        replicas: 2
+        template:
+          metadata:
+            labels:
+              application: "zmon-worker"
+              version: "v0.1"
+            annotations:
+              iam.amazonaws.com/role: {{STACK_NAME}}-{{STACK_VERSION}}-app-secretary
+              scheduler.alpha.kubernetes.io/critical-pod: ''
+              scheduler.alpha.kubernetes.io/tolerations: '[{"key":"CriticalAddonsOnly", "operator":"Exists"}]'
+          spec:
+            containers:
+              - name: zmon-worker
+                image: "pierone.stups.zalan.do/stups/zmon-worker:iv343"
+                env:
+                  - name: WORKER_TEAM
+                    value: "{{ACCOUNT_ALIAS}}"
+                  - name: WORKER_ZMON_QUEUES
+                    value: zmon:queue:default/25
+                  - name: WORKER_REDIS_SERVERS
+                    value: zmon-redis:6379
+
+                  - name: OAUTH2_ACCESS_TOKEN_URL
+                    value: https://token.services.auth.zalando.com/oauth2/access_token?realm=/services
+                  - name: CREDENTIALS_DIR
+                    value: /meta/credentials
+
+                volumeMounts:
+                  - name: credentials
+                    mountPath: /meta/credentials
+                    readOnly: true
+
+              - name: gerry
+                image: registry.opensource.zalan.do/teapot/gerry:v0.0.7
+                args:
+                  - /meta/credentials
+                  - --application-id=secretary
+                  - --mint-bucket=s3://{{MINT_BUCKET}}
+
+                volumeMounts:
+                  - name: credentials
+                    mountPath: /meta/credentials
+                    readOnly: false
+
+            volumes:
+              - name: credentials
+                emptyDir:
+                  medium: Memory
+
+  - path: /srv/kubernetes/manifests/deployments/zmon-scheduler.yaml
+    content: |
+      apiVersion: extensions/v1beta1
+      kind: Deployment
+      metadata:
+        name: "zmon-scheduler"
+        namespace: "kube-system"
+      spec:
+        replicas: 1
+        template:
+          metadata:
+            labels:
+              application: "zmon-scheduler"
+              version: "v0.1"
+            annotations:
+              iam.amazonaws.com/role: {{STACK_NAME}}-{{STACK_VERSION}}-app-secretary
+              scheduler.alpha.kubernetes.io/critical-pod: ''
+              scheduler.alpha.kubernetes.io/tolerations: '[{"key":"CriticalAddonsOnly", "operator":"Exists"}]'
+          spec:
+            containers:
+              - name: zmon-scheduler
+                image: "registry.opensource.zalan.do/stups/zmon-scheduler:cd114"
+
+                env:
+                  - name: LOCAL_ENTITY_ID
+                    value: kube-cluster[{{CLUSTER_ID}}]
+
+                  - name: SCHEDULER_OAUTH2_ACCESS_TOKEN_URL
+                    value: https://token.services.auth.zalando.com/oauth2/access_token?realm=/services
+                  - name: CREDENTIALS_DIR
+                    value: /meta/credentials
+                  - name: ZMON_BASE_URL
+                    value: https://data-service.zmon.zalan.do
+
+                  - name: SCHEDULER_REDIS_HOST
+                    value: zmon-redis
+                  - name: SCHEDULER_REDIS_PORT
+                    value: "6379"
+
+                  - name: SCHEDULER_ENTITY_BASE_FILTER_STR
+                    value: '[{"infrastructure_account":"aws:{{ACCOUNT_ID}}","region":"{{REGION}}"}]'
+                  - name: SCHEDULER_INSTANT_EVAL_HTTP_URL
+                    value: https://data-service.zmon.zalan.do/api/v1/instant-evaluations/kube-cluster[aws:{{ACCOUNT_ID}}:{{REGION}}]/
+                  - name: SCHEDULER_TRIAL_RUN_HTTP_URL
+                    value: https://data-service.zmon.zalan.do/api/v1/trial-runs/kube-cluster[aws:{{ACCOUNT_ID}}:{{REGION}}]/
+                  - name: SCHEDULER_DOWNTIME_HTTP_URL
+                    value: https://data-service.zmon.zalan.do/api/v1/downtimes/kube-cluster[aws:{{ACCOUNT_ID}}:{{REGION}}]/
+                  - name: SCHEDULER_CHECK_DETAIL_METRICS
+                    value: "true"
+                  - name: SCHEDULER_ENTITY_SERVICE_URL
+                    value: https://data-service.zmon.zalan.do/
+                  - name: SCHEDULER_CONTROLLER_URL
+                    value: https://data-service.zmon.zalan.do/
+                  - name: SCHEDULER_ENABLE_GLOBAL_ENTITY
+                    value: "false"
+
+                volumeMounts:
+                  - name: credentials
+                    mountPath: /meta/credentials
+                    readOnly: true
+
+              - name: gerry
+                image: registry.opensource.zalan.do/teapot/gerry:v0.0.7
+                args:
+                  - /meta/credentials
+                  - --application-id=secretary
+                  - --mint-bucket=s3://{{MINT_BUCKET}}
+
+                volumeMounts:
+                  - name: credentials
+                    mountPath: /meta/credentials
+                    readOnly: false
+
+            volumes:
+              - name: credentials
+                emptyDir:
+                  medium: Memory
+
+  - path: /srv/kubernetes/manifests/deployments/zmon-redis.yaml
+    content: |
+      apiVersion: extensions/v1beta1
+      kind: Deployment
+      metadata:
+        name: "zmon-redis"
+        namespace: "kube-system"
+      spec:
+        replicas: 1
+        template:
+          metadata:
+            labels:
+              application: "zmon-redis"
+              version: "v0.1"
+            annotations:
+              iam.amazonaws.com/role: {{STACK_NAME}}-{{STACK_VERSION}}-app-secretary
+              scheduler.alpha.kubernetes.io/critical-pod: ''
+              scheduler.alpha.kubernetes.io/tolerations: '[{"key":"CriticalAddonsOnly", "operator":"Exists"}]'
+          spec:
+            containers:
+              - name: zmon-redis
+                image: registry.opensource.zalan.do/stups/redis:3.2.0-alpine
+                ports:
+                  - containerPort: 6379
+
+  - path: /srv/kubernetes/manifests/services/zmon-redis.yaml
+    content: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "zmon-redis"
+        namespace: "kube-system"
+      spec:
+        ports:
+          - port: 6379
+            targetPort: 6379
+            protocol: TCP
+        selector:
+          application: "zmon-redis"
 
   - path: /srv/kubernetes/manifests/storageclasses/standard.yaml
     content: |

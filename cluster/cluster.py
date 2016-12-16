@@ -98,7 +98,7 @@ def get_etcd_bucket_name():
     return bucket_name
 
 
-def get_cluster_variables(stack_name: str, version: str, scalyr_access_key: str, worker_shared_secret=None):
+def get_cluster_variables(stack_name: str, version: str, scalyr_access_key: str, zmon_url: str, worker_shared_secret=None):
     route53 = boto3.client('route53')
     all_hosted_zones = route53.list_hosted_zones()['HostedZones']
     hosted_zone = all_hosted_zones[0]['Name'].rstrip('.')
@@ -131,8 +131,10 @@ def get_cluster_variables(stack_name: str, version: str, scalyr_access_key: str,
         'mint_bucket': mint_bucket,
         'etcd_bucket': etcd_bucket,
         'account_id': get_account_id(),
+        'account_alias': get_account_alias(),
         'region': get_region(),
-        'scalyr_access_key': scalyr_access_key
+        'scalyr_access_key': scalyr_access_key,
+        'zmon_url': zmon_url,
     }
     return variables
 
@@ -255,12 +257,13 @@ def cli():
 @click.option('--worker-nodes', default=1, type=int, help='Number of worker nodes')
 @click.option('--max-worker-nodes', default=10, type=int, help='Maximum number of nodes in the worker ASG')
 @click.option('--scalyr-access-key', type=str, required=True, help='Secret for the logging agent')
-def create(stack_name, version, dry_run, instance_type, master_nodes, worker_nodes, max_worker_nodes, scalyr_access_key):
+@click.option('--zmon-url', type=str, required=False, help='URL to ZMON', default='https://zmon.zalando.net')
+def create(stack_name, version, dry_run, instance_type, master_nodes, worker_nodes, max_worker_nodes, scalyr_access_key, zmon_url):
     '''
     Create a new Kubernetes cluster (using current AWS credentials)
     '''
 
-    variables = get_cluster_variables(stack_name, version, scalyr_access_key)
+    variables = get_cluster_variables(stack_name, version, scalyr_access_key, zmon_url)
     info('Cluster ID is:               {}'.format(variables['cluster_id']))
     info('API server endpoint will be: {}'.format(variables['api_server']))
     if dry_run:
@@ -313,14 +316,15 @@ def same_user_data(enc1, enc2):
 @click.option('--postpone', is_flag=True, help='Postpone node update to a later point in time')
 @click.option('--max-worker-nodes', default=10, type=int, help='Maximum number of nodes in the worker ASG')
 @click.option('--scalyr-access-key', type=str, required=True, help='Secret for the logging agent')
-def update(stack_name, version, dry_run, force, instance_type, master_nodes, worker_nodes, postpone, max_worker_nodes, scalyr_access_key):
+@click.option('--zmon-url', type=str, required=False, help='URL to ZMON', default='https://zmon.zalando.net')
+def update(stack_name, version, dry_run, force, instance_type, master_nodes, worker_nodes, postpone, max_worker_nodes, scalyr_access_key, zmon_url):
     '''
     Update Kubernetes cluster
     '''
     existing_user_data_master = get_launch_configuration_user_data(stack_name, version, 'Master')
     existing_user_data_worker = get_launch_configuration_user_data(stack_name, version, 'Worker')
     worker_shared_secret = get_worker_shared_secret(existing_user_data_worker)
-    variables = get_cluster_variables(stack_name, version, scalyr_access_key, worker_shared_secret)
+    variables = get_cluster_variables(stack_name, version, scalyr_access_key, zmon_url, worker_shared_secret)
     if dry_run:
         print(yaml.safe_dump(variables))
     user_data_master = get_user_data('userdata-master.yaml', variables)
